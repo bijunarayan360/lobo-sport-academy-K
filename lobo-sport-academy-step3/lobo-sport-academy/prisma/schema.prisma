@@ -1,0 +1,415 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ==================== ENUMS ====================
+
+enum UserRole {
+  ADMIN
+  COACH
+  PARENT
+}
+
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  OVERDUE
+  CANCELLED
+  REFUNDED
+}
+
+enum PaymentMethod {
+  CASH
+  CARD
+  BANK_TRANSFER
+  ONLINE
+}
+
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+  EXCUSED
+  LATE
+}
+
+enum ProgramStatus {
+  ACTIVE
+  INACTIVE
+  FULL
+  CANCELLED
+}
+
+enum EnrollmentStatus {
+  ACTIVE
+  COMPLETED
+  DROPPED
+  SUSPENDED
+}
+
+enum NotificationType {
+  EMAIL
+  WHATSAPP
+  IN_APP
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  FAILED
+  READ
+}
+
+// ==================== CORE: USER ====================
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  password      String?   // null for OAuth users
+  name          String
+  phone         String?
+  avatar        String?
+  role          UserRole  @default(PARENT)
+  emailVerified DateTime?
+  isActive      Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Relations
+  accounts      Account[]
+  sessions      Session[]
+  admin         Admin?
+  coach         Coach?
+  parent        Parent?
+
+  notifications Notification[]
+
+  @@map("users")
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+// ==================== DOMAIN: ADMIN ====================
+
+model Admin {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@map("admins")
+}
+
+// ==================== DOMAIN: COACH ====================
+
+model Coach {
+  id          String   @id @default(cuid())
+  userId      String   @unique
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  specialty   String?
+  bio         String?  @db.Text
+  experience  Int?     // years
+  certifications String[]
+  hourlyRate  Decimal? @db.Decimal(10, 2)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  programs    Program[]
+  attendances Attendance[]
+  ratings     Rating[]
+
+  @@map("coaches")
+}
+
+// ==================== DOMAIN: PARENT ====================
+
+model Parent {
+  id          String   @id @default(cuid())
+  userId      String   @unique
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  address     String?
+  emergencyContact String?
+  emergencyPhone   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  students    Student[]
+  payments    Payment[]
+
+  @@map("parents")
+}
+
+// ==================== DOMAIN: STUDENT ====================
+
+model Student {
+  id            String   @id @default(cuid())
+  firstName     String
+  lastName      String
+  dateOfBirth   DateTime
+  gender        Gender
+  photo         String?
+  medicalNotes  String?  @db.Text
+  allergies     String?
+  emergencyContact String?
+  emergencyPhone   String?
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relations
+  parentId      String
+  parent        Parent   @relation(fields: [parentId], references: [id], onDelete: Cascade)
+
+  enrollments   Enrollment[]
+  attendances   Attendance[]
+  ratings       Rating[]
+  playerCards   PlayerCard[]
+
+  @@map("students")
+}
+
+// ==================== BUSINESS: PROGRAM ====================
+
+model Program {
+  id          String        @id @default(cuid())
+  name        String
+  slug        String        @unique
+  description String?       @db.Text
+  sport       String
+  ageGroupMin Int
+  ageGroupMax Int
+  maxCapacity Int
+  price       Decimal       @db.Decimal(10, 2)
+  duration    Int           // in weeks
+  schedule    String        // e.g., "Mon, Wed 4:00-6:00 PM"
+  location    String?
+  status      ProgramStatus @default(ACTIVE)
+  image       String?
+  startDate   DateTime?
+  endDate     DateTime?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  // Relations
+  coachId     String?
+  coach       Coach?        @relation(fields: [coachId], references: [id])
+  enrollments Enrollment[]
+  attendances Attendance[]
+
+  @@map("programs")
+}
+
+// ==================== BUSINESS: ENROLLMENT ====================
+
+model Enrollment {
+  id          String           @id @default(cuid())
+  studentId   String
+  student     Student          @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  programId   String
+  program     Program          @relation(fields: [programId], references: [id], onDelete: Cascade)
+  status      EnrollmentStatus @default(ACTIVE)
+  enrolledAt  DateTime         @default(now())
+  completedAt DateTime?
+  droppedAt   DateTime?
+  notes       String?
+
+  // Relations
+  payments    Payment[]
+
+  @@unique([studentId, programId])
+  @@map("enrollments")
+}
+
+// ==================== BUSINESS: PAYMENT ====================
+
+model Payment {
+  id            String        @id @default(cuid())
+  amount        Decimal       @db.Decimal(10, 2)
+  status        PaymentStatus @default(PENDING)
+  method        PaymentMethod?
+  description   String?
+  stripePaymentId String?
+  paidAt        DateTime?
+  dueDate       DateTime
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  // Relations
+  enrollmentId  String
+  enrollment    Enrollment    @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+  parentId      String
+  parent        Parent        @relation(fields: [parentId], references: [id], onDelete: Cascade)
+
+  @@map("payments")
+}
+
+// ==================== BUSINESS: ATTENDANCE ====================
+
+model Attendance {
+  id        String           @id @default(cuid())
+  date      DateTime
+  status    AttendanceStatus
+  notes     String?
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+
+  // Relations
+  studentId String
+  student   Student          @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  programId String
+  program   Program          @relation(fields: [programId], references: [id], onDelete: Cascade)
+  coachId   String?
+  coach     Coach?           @relation(fields: [coachId], references: [id])
+
+  @@unique([studentId, programId, date])
+  @@map("attendances")
+}
+
+// ==================== ANALYTICS: RATING ====================
+
+model Rating {
+  id          String   @id @default(cuid())
+  skill       String   // e.g., "Dribbling", "Passing", "Speed"
+  score       Int      // 1-10
+  notes       String?  @db.Text
+  ratedAt     DateTime @default(now())
+
+  // Relations
+  studentId   String
+  student     Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  coachId     String
+  coach       Coach    @relation(fields: [coachId], references: [id], onDelete: Cascade)
+  programId   String
+
+  @@map("ratings")
+}
+
+// ==================== ANALYTICS: PLAYER CARD ====================
+
+model PlayerCard {
+  id          String   @id @default(cuid())
+  cardNumber  String   @unique
+  overallScore Decimal @db.Decimal(3, 1)
+  strengths   String[]
+  weaknesses  String[]
+  goals       String?  @db.Text
+  generatedAt DateTime @default(now())
+  pdfUrl      String?
+
+  // Relations
+  studentId   String
+  student     Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@map("player_cards")
+}
+
+// ==================== NOTIFICATIONS ====================
+
+model Notification {
+  id        String             @id @default(cuid())
+  type      NotificationType
+  title     String
+  message   String             @db.Text
+  status    NotificationStatus @default(PENDING)
+  sentAt    DateTime?
+  readAt    DateTime?
+  createdAt DateTime           @default(now())
+
+  // Relations
+  userId    String
+  user      User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("notifications")
+}
+
+// ==================== CMS ====================
+
+model CmsPage {
+  id          String   @id @default(cuid())
+  slug        String   @unique
+  title       String
+  content     String   @db.Text
+  metaTitle   String?
+  metaDescription String?
+  isPublished Boolean  @default(false)
+  publishedAt DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("cms_pages")
+}
+
+model CmsMedia {
+  id        String   @id @default(cuid())
+  filename  String
+  url       String
+  mimeType  String
+  size      Int
+  alt       String?
+  createdAt DateTime @default(now())
+
+  @@map("cms_media")
+}
+
+// ==================== SETTINGS ====================
+
+model Setting {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  value     String
+  category  String   @default("general")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("settings")
+}
